@@ -1,0 +1,29 @@
+name = "xaostech-data"
+compatibility_date = "2025-12-31"
+main = "src/index.js"
+
+[[d1_databases]]
+binding = "DB"
+database_name = "data-db"
+
+[[kv_namespaces]]
+binding = "CONSENT_KV"
+
+[vars]
+COOKIE_DOMAIN = ".xaostech.io"
+COOKIE_SECURE = "true"
+COOKIE_HTTP_ONLY = "true"
+COOKIE_SAME_SITE = "Strict"
+GDPR_REQUIRED = "true"
+
+[env.production]
+routes = [{ pattern = "data.xaostech.io/*", zone_name = "xaostech.io" }]
+
+[[env.production.d1_databases]]
+binding = "DB"
+database_name = "data-db"
+database_id = ""
+
+[[env.production.kv_namespaces]]
+binding = "CONSENT_KV"
+id = ""
