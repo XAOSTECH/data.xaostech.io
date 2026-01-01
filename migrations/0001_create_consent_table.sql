@@ -1,15 +1,17 @@
-CREATE TABLE IF NOT EXISTS consent (
-  id INTEGER PRIMARY KEY AUTOINCREMENT,
-  user_id TEXT UNIQUE NOT NULL,
-  accepted BOOLEAN DEFAULT 0,
-  categories TEXT,
-  timestamp DATETIME DEFAULT CURRENT_TIMESTAMP
-);
-
-CREATE TABLE IF NOT EXISTS sessions (
+-- Consent Records Table
+CREATE TABLE IF NOT EXISTS consent_records (
   id TEXT PRIMARY KEY,
   user_id TEXT,
-  data TEXT,
-  created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-  expires_at DATETIME
+  accepted BOOLEAN DEFAULT 0,
+  categories TEXT DEFAULT '[]',
+  preferences TEXT DEFAULT '{}',
+  reason TEXT,
+  created_at INTEGER NOT NULL DEFAULT (unixepoch()),
+  updated_at INTEGER,
+  deleted_at INTEGER
 );
+
+-- Create indexes for performance
+CREATE INDEX IF NOT EXISTS idx_consent_user ON consent_records(user_id);
+CREATE INDEX IF NOT EXISTS idx_consent_accepted ON consent_records(accepted);
+CREATE INDEX IF NOT EXISTS idx_consent_created ON consent_records(created_at);

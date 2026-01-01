@@ -70,21 +70,29 @@
 
 ## 🔍 Overview
 
-data worker
+Centralized **privacy & data management** service:
+- ✅ GDPR-compliant consent management
+- ✅ Centralized media storage (R2) with quota tracking
+- ✅ Data subject rights (access, export, deletion)
+- ✅ Privacy policies and session management
 
 ### Why data.xaostech.io?
 
-{{WHY_PROJECT}}
+Separating **data handling** keeps other workers focused on business logic. This worker owns:
+- **Privacy**: SameSite=Strict cookies, consent audit trails
+- **Media**: R2 storage, quota enforcement, soft deletes
+- **Compliance**: GDPR Art. 7, 15, 17 implementation
 
 ---
 
 ## ✨ Features
 
-- 🚀 **Feature 1** - Description of feature 1
-- 🔧 **Feature 2** - Description of feature 2
-- 📦 **Feature 3** - Description of feature 3
-- 🔒 **Feature 4** - Description of feature 4
-- ⚡ **Feature 5** - Description of feature 5
+- � **GDPR Consent** - Explicit opt-in (analytics, marketing, functional)
+- 💾 **Media Storage** - Centralized R2 with quota tracking (10GB free tier)
+- 📤 **Data Export** - GDPR Art. 15 access requests (JSON)
+- 🗑️ **Account Deletion** - GDPR Art. 17 with 30-day grace period
+- 📋 **Audit Logging** - Compliance trail for all data operations
+- 🔒 **SameSite=Strict** - Domain-wide cookie security
 
 ---
 
@@ -92,15 +100,26 @@ data worker
 
 ### Prerequisites
 
-- {{PREREQUISITE_1}}
-- {{PREREQUISITE_2}}
-- {{PREREQUISITE_3}}
+- Node.js 18+
+- Cloudflare account with Workers
+- D1 database, R2 bucket, KV namespace
 
 ### Quick Start
 
 ```bash
 # Clone the repository
 git clone https://github.com/XAOSTECH/data.xaostech.io.git
+cd data.xaostech.io
+
+# Install dependencies
+npm install
+
+# Local development
+npm run dev
+
+# Deploy to production
+npm run deploy
+```
 cd data.xaostech.io
 
 # Run installation

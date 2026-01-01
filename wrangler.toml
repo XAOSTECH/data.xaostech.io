@@ -1,29 +1,34 @@
 name = "xaostech-data"
 compatibility_date = "2025-12-31"
-main = "src/index.js"
+main = "src/index.ts"
+send_metrics = false
 
-[[d1_databases]]
-binding = "DB"
-database_name = "data-db"
+[env.production]
+routes = [{ pattern = "data.xaostech.io/*", zone_name = "xaostech.io" }]
 
-[[kv_namespaces]]
-binding = "CONSENT_KV"
-
-[vars]
+[env.production.vars]
 COOKIE_DOMAIN = ".xaostech.io"
 COOKIE_SECURE = "true"
 COOKIE_HTTP_ONLY = "true"
 COOKIE_SAME_SITE = "Strict"
 GDPR_REQUIRED = "true"
 
-[env.production]
-routes = [{ pattern = "data.xaostech.io/*", zone_name = "xaostech.io" }]
-
 [[env.production.d1_databases]]
 binding = "DB"
 database_name = "data-db"
-database_id = ""
+database_id = "${D1_DATA_DB_ID}"
 
 [[env.production.kv_namespaces]]
 binding = "CONSENT_KV"
-id = ""
+id = "${KV_CONSENT_ID}"
+
+[env.testing]
+routes = [{ pattern = "data.testing.local/*", zone_name = "localhost" }]
+
+[env.testing.vars]
+COOKIE_DOMAIN = ".testing.local"
+COOKIE_SECURE = "false"
+COOKIE_HTTP_ONLY = "true"
+COOKIE_SAME_SITE = "Strict"
+GDPR_REQUIRED = "true"
+

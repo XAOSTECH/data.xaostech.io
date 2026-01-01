@@ -6,7 +6,12 @@
     "dev": "wrangler dev",
     "deploy": "wrangler deploy --env production"
   },
+  "dependencies": {
+    "hono": "latest",
+    "zod": "latest"
+  },
   "devDependencies": {
-    "wrangler": "latest"
+    "wrangler": "latest",
+    "typescript": "latest"
   }
 }
