@@ -70,11 +70,11 @@ app.get('/', (c) => {
       
       <div class="section">
         <h2>Privacy First</h2>
-        <p>XAOSTECH uses first-party cookies only with your explicit consent.</p>
+        <p>XAOSTECH uses first-party cookies only.</p>
         <ul>
-          <li><strong>analytics</strong> - Track page views and user journeys</li>
-          <li><strong>functional</strong> - Remember preferences (language, theme)</li>
-          <li><strong>marketing</strong> - Show relevant content</li>
+          <li><strong>functional</strong> - Account, management, authorisation, cache, preferences, e.a.</li>
+          <li><s>analytics</s> - None + Cloudflare webbeacon disabled</li>
+          <li><s>marketing</s> - None; not interested.</li>
         </ul>
       </div>
 
