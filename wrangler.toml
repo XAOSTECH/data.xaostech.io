@@ -22,6 +22,10 @@ database_id = "${D1_DATA_DB_ID}"
 binding = "CONSENT_KV"
 id = "${KV_CONSENT_ID}"
 
+[[env.production.r2_buckets]]
+binding = "IMG"
+bucket_name = "img"
+
 [env.testing]
 routes = [{ pattern = "data.testing.local/*", zone_name = "localhost" }]
 
