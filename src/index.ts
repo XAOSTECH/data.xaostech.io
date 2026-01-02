@@ -4,7 +4,8 @@ import { z } from 'zod';
 
 interface Env {
   DB: D1Database;
-  MEDIA_STORAGE: R2Bucket;
+  IMG: R2Bucket;
+  BLOG_MEDIA: R2Bucket;
   CONSENT_KV: KVNamespace;
   CACHE: KVNamespace;
   COOKIE_DOMAIN: string;
@@ -51,6 +52,20 @@ const clearCookieHeader = (name: string, env: Env): string => {
 
 app.get('/health', (c) => c.json({ status: 'ok', service: 'data' }));
 
+// === DEBUG: HEADERS PRESENCE ===
+app.get('/debug/headers', (c) => {
+  const headerPresent = !!(c.req.header('CF-Access-Client-Id') || c.req.header('Cf-Access-Client-Id'));
+  const cfAuthCookie = !!c.req.header('CF_Authorization') || !!c.req.header('Cf-Access-Authorization');
+  return c.json({ headerPresent, cfAuthCookie });
+});
+
+// === DEBUG: ENV PRESENCE (runtime only) ===
+app.get('/debug/env', (c: any) => {
+  const envHasClientId = !!(c.env && (c.env as any).CF_ACCESS_CLIENT_ID);
+  const envHasClientSecret = !!(c.env && (c.env as any).CF_ACCESS_CLIENT_SECRET);
+  return c.json({ envHasClientId, envHasClientSecret });
+});
+
 app.get('/', (c) => {
   return c.html(`
     <!DOCTYPE html>
@@ -70,11 +85,11 @@ app.get('/', (c) => {
       
       <div class="section">
         <h2>Privacy First</h2>
-        <p>XAOSTECH uses first-party cookies only with your explicit consent.</p>
+        <p>XAOSTECH uses first-party cookies only.</p>
         <ul>
-          <li><strong>analytics</strong> - Track page views and user journeys</li>
-          <li><strong>functional</strong> - Remember preferences (language, theme)</li>
-          <li><strong>marketing</strong> - Show relevant content</li>
+          <li><strong>functional</strong> - Account management, authorisation, cache and preferences</li>
+          <li><strong><s>analytics</s></strong> - None + Cloudflare webbeacon disabled</li>
+          <li><strong><s>marketing</s></strong> - None; not interested.</li>
         </ul>
       </div>
 
@@ -385,7 +400,7 @@ app.post('/media/upload', async (c) => {
     const key = `${userId}/${Date.now()}-${file.name.replace(/[^a-z0-9.-]/gi, '_')}`;
     const buffer = await file.arrayBuffer();
 
-    await c.env.MEDIA_STORAGE.put(key, buffer, {
+    await c.env.IMG.put(key, buffer, {
       httpMetadata: {
         contentType: file.type,
         cacheControl: 'public, max-age=31536000'
@@ -452,7 +467,7 @@ app.delete('/media/:key', async (c) => {
     const fileSizeGb = fileRecord.size_bytes / (1024 * 1024 * 1024);
 
     // Delete from R2
-    await c.env.MEDIA_STORAGE.delete(key);
+    await c.env.IMG.delete(key);
 
     // Mark as deleted in D1
     await c.env.DB.prepare(
@@ -524,6 +539,120 @@ app.post('/api/session', async (c) => {
   } catch (e) {
     console.error('Session error:', e);
     return c.json({ error: 'Failed to create session' }, 500);
+  }
+});
+
+// ===== ASSET SERVING (Favicons, logos from IMG bucket) =====
+
+app.get('/assets/:filename', async (c) => {
+  const filename = c.req.param('filename');
+  
+  if (!filename) {
+    return c.json({ error: 'Filename required' }, 400);
+  }
+
+  try {
+    const object = await c.env.IMG.get(filename);
+    
+    if (!object) {
+      return c.json({ error: 'Asset not found' }, 404);
+    }
+
+    // Return the object with proper headers
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('Cache-Control', 'public, max-age=604800'); // 1 week cache
+    
+    return new Response(object.body, {
+      status: 200,
+      headers
+    });
+  } catch (err: any) {
+    console.error('Error fetching asset:', err);
+    return c.json({ error: 'Failed to fetch asset' }, 500);
+  }
+});
+
+// ===== BLOG MEDIA ENDPOINTS (R2) =====
+
+app.post('/blog-media/upload', async (c) => {
+  const userId = c.req.header('X-User-ID');
+  
+  if (!userId) {
+    return c.json({ error: 'User ID required' }, 401);
+  }
+
+  try {
+    const formData = await c.req.formData();
+    const file = formData.get('file') as File;
+    const bucket = formData.get('bucket') as string || 'blog-media';
+
+    if (!file) {
+      return c.json({ error: 'No file provided' }, 400);
+    }
+
+    // Determine which R2 bucket to use
+    let r2Bucket: R2Bucket;
+    if (bucket === 'blog-media') {
+      r2Bucket = c.env.BLOG_MEDIA;
+    } else {
+      return c.json({ error: 'Invalid bucket' }, 400);
+    }
+
+    // Upload to R2
+    const r2Key = `${userId}/${Date.now()}-${file.name.replace(/[^a-z0-9.-]/gi, '_')}`;
+    const buffer = await file.arrayBuffer();
+
+    await r2Bucket.put(r2Key, buffer, {
+      httpMetadata: {
+        contentType: file.type,
+      },
+      customMetadata: {
+        uploadedBy: userId,
+        uploadedAt: new Date().toISOString(),
+      },
+    });
+
+    // Return metadata for caller to record
+    return c.json({
+      mediaId: crypto.randomUUID(),
+      r2_key: r2Key,
+      url: `https://${bucket}.xaostech.io/${r2Key}`,
+      bucket,
+      size: file.size,
+    }, 201);
+  } catch (err: any) {
+    console.error('Blog media upload error:', err);
+    return c.json({ error: 'Upload failed' }, 500);
+  }
+});
+
+app.get('/blog-media/:key', async (c) => {
+  const key = c.req.param('key');
+  
+  if (!key) {
+    return c.json({ error: 'Key required' }, 400);
+  }
+
+  try {
+    const object = await c.env.BLOG_MEDIA.get(key);
+    
+    if (!object) {
+      return c.json({ error: 'Media not found' }, 404);
+    }
+
+    // Return the object with proper headers
+    const headers = new Headers();
+    object.writeHttpMetadata(headers);
+    headers.set('Cache-Control', 'public, max-age=31536000');
+    
+    return new Response(object.body, {
+      status: 200,
+      headers
+    });
+  } catch (err: any) {
+    console.error('Error fetching blog media:', err);
+    return c.json({ error: 'Failed to fetch media' }, 500);
   }
 });
 

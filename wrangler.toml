@@ -4,6 +4,8 @@ main = "src/index.ts"
 send_metrics = false
 
 [env.production]
+name = "xaostech-data"
+main = "src/index.ts"
 routes = [{ pattern = "data.xaostech.io/*", zone_name = "xaostech.io" }]
 
 [env.production.vars]
@@ -21,6 +23,14 @@ database_id = "${D1_DATA_DB_ID}"
 [[env.production.kv_namespaces]]
 binding = "CONSENT_KV"
 id = "${KV_CONSENT_ID}"
+
+[[env.production.r2_buckets]]
+binding = "IMG"
+bucket_name = "img"
+
+[[env.production.r2_buckets]]
+binding = "BLOG_MEDIA"
+bucket_name = "blog-media"
 
 [env.testing]
 routes = [{ pattern = "data.testing.local/*", zone_name = "localhost" }]
