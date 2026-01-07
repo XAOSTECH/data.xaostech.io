@@ -28,7 +28,16 @@ const WithdrawalSchema = z.object({
   reason: z.string().optional(),
 });
 
+import { applySecurityHeaders } from '../shared/types/security';
+
 const app = new Hono<{ Bindings: Env }>();
+
+// Global security headers middleware
+app.use('*', async (c, next) => {
+  await next();
+  const res = c.res as Response;
+  return applySecurityHeaders(res);
+});
 
 // ===== HELPER FUNCTIONS =====
 
@@ -51,20 +60,6 @@ const clearCookieHeader = (name: string, env: Env): string => {
 // ===== PUBLIC ENDPOINTS =====
 
 app.get('/health', (c) => c.json({ status: 'ok', service: 'data' }));
-
-// === DEBUG: HEADERS PRESENCE ===
-app.get('/debug/headers', (c) => {
-  const headerPresent = !!(c.req.header('CF-Access-Client-Id') || c.req.header('Cf-Access-Client-Id'));
-  const cfAuthCookie = !!c.req.header('CF_Authorization') || !!c.req.header('Cf-Access-Authorization');
-  return c.json({ headerPresent, cfAuthCookie });
-});
-
-// === DEBUG: ENV PRESENCE (runtime only) ===
-app.get('/debug/env', (c: any) => {
-  const envHasClientId = !!(c.env && (c.env as any).CF_ACCESS_CLIENT_ID);
-  const envHasClientSecret = !!(c.env && (c.env as any).CF_ACCESS_CLIENT_SECRET);
-  return c.json({ envHasClientId, envHasClientSecret });
-});
 
 app.get('/', (c) => {
   return c.html(`
@@ -325,6 +320,23 @@ app.post('/api/delete-account', async (c) => {
   }
 });
 
+// ===== FAVICON =====
+app.get('/favicon.ico', async (c) => {
+  try {
+    const object = await c.env.IMG.get('XAOSTECH_LOGO.png');
+    if (!object) return c.notFound();
+
+    const headers = new Headers();
+    headers.set('Content-Type', 'image/png');
+    headers.set('Cache-Control', 'public, max-age=604800');
+
+    return new Response(object.body, { status: 200, headers });
+  } catch (err) {
+    console.error('[DATA] favicon serve error:', err);
+    return c.json({ error: 'Failed to serve favicon' }, 500);
+  }
+});
+
 // ===== MEDIA STORAGE (R2 + Quota Tracking) =====
 // Centralized media operations for blog, portfolio, and other services
 // R2 credentials stored as Cloudflare Worker Secrets (never in code)
@@ -552,24 +564,47 @@ app.get('/assets/:filename', async (c) => {
   }
 
   try {
-    const object = await c.env.IMG.get(filename);
-    
+    const traceId = c.req.header('X-Trace-Id') || null;
+    const incomingHasCfAccessClientId = !!(c.req.header('CF-Access-Client-Id') || c.req.header('Cf-Access-Client-Id'));
+    const incomingHasCfAccessJwt = !!(c.req.header('cf-access-jwt-assertion') || c.req.header('CF-Access-JWT-Assertion'));
+    const imgBindingPresent = !!(c.env && c.env.IMG);
+
+    console.debug('[DATA] Incoming asset request presence:', { traceId, incomingHasCfAccessClientId, incomingHasCfAccessJwt, imgBindingPresent, path: c.req.path });
+
+    // Try to read object; catch and log any IMG.get error specifically
+    let object: any;
+    try {
+      object = await c.env.IMG.get(filename);
+    } catch (imgErr: any) {
+      console.error('[DATA] IMG.get threw an error', { traceId, filename, err: imgErr?.message || String(imgErr), stack: imgErr?.stack || undefined });
+      return c.json({ error: 'Failed to read asset from IMG', traceId }, 500);
+    }
+
     if (!object) {
-      return c.json({ error: 'Asset not found' }, 404);
+      console.warn('[DATA] Asset not found', { traceId, filename });
+      return c.json({ error: 'Asset not found', traceId }, 404);
     }
 
     // Return the object with proper headers
     const headers = new Headers();
-    object.writeHttpMetadata(headers);
+    try {
+      object.writeHttpMetadata(headers);
+    } catch (metaErr: any) {
+      console.error('[DATA] Failed to write object metadata', { traceId, filename, err: metaErr?.message || String(metaErr) });
+    }
+
     headers.set('Cache-Control', 'public, max-age=604800'); // 1 week cache
-    
+    // Echo trace id for easier correlation
+    if (traceId) headers.set('X-Trace-Id', traceId);
+
+    console.debug('[DATA] Returning asset', { traceId, filename });
     return new Response(object.body, {
       status: 200,
       headers
     });
   } catch (err: any) {
-    console.error('Error fetching asset:', err);
-    return c.json({ error: 'Failed to fetch asset' }, 500);
+    console.error('[DATA] Error fetching asset general handler error', { filename, err: err?.message || String(err), stack: err?.stack || undefined });
+    return c.json({ error: 'Failed to fetch asset', traceId: c.req.header('X-Trace-Id') || null }, 500);
   }
 });
 
