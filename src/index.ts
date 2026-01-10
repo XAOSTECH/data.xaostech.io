@@ -28,15 +28,47 @@ const WithdrawalSchema = z.object({
   reason: z.string().optional(),
 });
 
-import { applySecurityHeaders } from '../shared/types/security';
+import { getSecurityHeaders } from '../shared/types/security';
 
 const app = new Hono<{ Bindings: Env }>();
 
 // Global security headers middleware
+// For binary responses (R2 streams), we add headers directly instead of re-wrapping
+// the Response, which can cause stream consumption issues
 app.use('*', async (c, next) => {
   await next();
-  const res = c.res as Response;
-  return applySecurityHeaders(res);
+  
+  const res = c.res;
+  if (!res) return;
+  
+  // Get content-type to check if binary
+  const contentType = res.headers.get('content-type') || '';
+  const isBinary = contentType.startsWith('image/') || 
+                   contentType.startsWith('audio/') || 
+                   contentType.startsWith('video/') ||
+                   contentType.startsWith('application/octet-stream');
+  
+  // For binary responses, add security headers to existing response
+  // without re-wrapping (avoids stream consumption issues)
+  const secHeaders = getSecurityHeaders();
+  if (isBinary) {
+    for (const k of Object.keys(secHeaders)) {
+      res.headers.set(k, secHeaders[k]);
+    }
+    return res;
+  }
+  
+  // For other responses, create new response with security headers
+  const headers = new Headers(res.headers);
+  for (const k of Object.keys(secHeaders)) {
+    headers.set(k, secHeaders[k]);
+  }
+  
+  return new Response(res.body, {
+    status: res.status,
+    statusText: res.statusText,
+    headers,
+  });
 });
 
 // ===== HELPER FUNCTIONS =====
@@ -591,6 +623,26 @@ app.get('/assets/:filename', async (c) => {
       object.writeHttpMetadata(headers);
     } catch (metaErr: any) {
       console.error('[DATA] Failed to write object metadata', { traceId, filename, err: metaErr?.message || String(metaErr) });
+    }
+
+    // Ensure content-type is set (fallback based on extension if R2 didn't provide it)
+    if (!headers.get('content-type')) {
+      const ext = filename.split('.').pop()?.toLowerCase() || '';
+      const mimeTypes: Record<string, string> = {
+        'png': 'image/png',
+        'jpg': 'image/jpeg',
+        'jpeg': 'image/jpeg',
+        'gif': 'image/gif',
+        'webp': 'image/webp',
+        'svg': 'image/svg+xml',
+        'ico': 'image/x-icon',
+        'mp3': 'audio/mpeg',
+        'wav': 'audio/wav',
+        'mp4': 'video/mp4',
+        'webm': 'video/webm',
+        'pdf': 'application/pdf',
+      };
+      headers.set('Content-Type', mimeTypes[ext] || 'application/octet-stream');
     }
 
     headers.set('Cache-Control', 'public, max-age=604800'); // 1 week cache
