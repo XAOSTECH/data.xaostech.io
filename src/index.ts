@@ -4,6 +4,8 @@ import { z } from 'zod';
 
 interface Env {
   DB: D1Database;
+  ACCOUNT_DB: D1Database;
+  BLOG_DB: D1Database;
   IMG: R2Bucket;
   BLOG_MEDIA: R2Bucket;
   CONSENT_KV: KVNamespace;
@@ -740,6 +742,358 @@ app.get('/blog-media/:key', async (c) => {
   } catch (err: any) {
     console.error('Error fetching blog media:', err);
     return c.json({ error: 'Failed to fetch media' }, 500);
+  }
+});
+
+// =============================================================================
+// USER AUTH ROUTES (for API worker to call via service binding)
+// Uses ACCOUNT_DB for user storage
+// =============================================================================
+
+// Find user by GitHub ID
+app.get('/users/github/:githubId', async (c) => {
+  const githubId = c.req.param('githubId');
+  const db = c.env.ACCOUNT_DB;
+  
+  if (!db) {
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
+  }
+  
+  try {
+    const row = await db.prepare(`
+      SELECT id, username, email, avatar_url, role, is_admin, github_id, github_username, github_avatar_url
+      FROM users WHERE github_id = ?
+    `).bind(githubId).first();
+    
+    if (!row) {
+      return c.json({ found: false }, 200);
+    }
+    
+    return c.json({ found: true, user: row });
+  } catch (err: any) {
+    console.error('User lookup error:', err);
+    return c.json({ error: 'Database error' }, 500);
+  }
+});
+
+// Find user by email (for email/password auth)
+app.get('/users/email/:email', async (c) => {
+  const email = decodeURIComponent(c.req.param('email'));
+  const db = c.env.ACCOUNT_DB;
+  
+  if (!db) {
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
+  }
+  
+  try {
+    const row = await db.prepare(`
+      SELECT id, username, email, avatar_url, role, is_admin, password_hash
+      FROM users WHERE email = ?
+    `).bind(email).first();
+    
+    if (!row) {
+      return c.json({ found: false }, 200);
+    }
+    
+    return c.json({ found: true, user: row });
+  } catch (err: any) {
+    console.error('User email lookup error:', err);
+    return c.json({ error: 'Database error' }, 500);
+  }
+});
+
+// Get user by ID
+app.get('/users/:userId', async (c) => {
+  const userId = c.req.param('userId');
+  const db = c.env.ACCOUNT_DB;
+  
+  if (!db) {
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
+  }
+  
+  try {
+    const row = await db.prepare(`
+      SELECT id, username, email, avatar_url, role, is_admin, github_id, created_at
+      FROM users WHERE id = ?
+    `).bind(userId).first();
+    
+    if (!row) {
+      return c.json({ error: 'User not found' }, 404);
+    }
+    
+    return c.json({ user: row });
+  } catch (err: any) {
+    console.error('User fetch error:', err);
+    return c.json({ error: 'Database error' }, 500);
+  }
+});
+
+// Create new user (GitHub OAuth signup or email/password registration)
+app.post('/users', async (c) => {
+  const db = c.env.ACCOUNT_DB;
+  
+  if (!db) {
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
+  }
+  
+  try {
+    const body = await c.req.json();
+    const { id, github_id, username, email, avatar_url, github_username, github_avatar_url, role, password_hash } = body;
+    
+    // Support both OAuth and password-based registration
+    if (password_hash) {
+      // Email/password registration
+      await db.prepare(`
+        INSERT INTO users (id, username, email, password_hash, role, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      `).bind(id, username, email, password_hash, role || 'user').run();
+    } else {
+      // GitHub OAuth registration
+      await db.prepare(`
+        INSERT INTO users (id, github_id, username, email, avatar_url, github_username, github_avatar_url, role, created_at, updated_at)
+        VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
+      `).bind(id, github_id, username, email, avatar_url, github_username || '', github_avatar_url || '', role || 'user').run();
+    }
+    
+    return c.json({ success: true, userId: id }, 201);
+  } catch (err: any) {
+    console.error('User create error:', err);
+    return c.json({ error: 'Failed to create user', details: err.message }, 500);
+  }
+});
+
+// Update user (login tracking, profile updates)
+app.patch('/users/:userId', async (c) => {
+  const userId = c.req.param('userId');
+  const db = c.env.ACCOUNT_DB;
+  
+  if (!db) {
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
+  }
+  
+  try {
+    const body = await c.req.json();
+    const updates: string[] = [];
+    const values: any[] = [];
+    
+    // Only update provided fields
+    if (body.github_username !== undefined) {
+      updates.push('github_username = ?');
+      values.push(body.github_username);
+    }
+    if (body.github_avatar_url !== undefined) {
+      updates.push('github_avatar_url = ?');
+      values.push(body.github_avatar_url);
+    }
+    if (body.username !== undefined) {
+      updates.push('username = ?');
+      values.push(body.username);
+    }
+    if (body.avatar_url !== undefined) {
+      updates.push('avatar_url = ?');
+      values.push(body.avatar_url);
+    }
+    if (body.email !== undefined) {
+      updates.push('email = ?');
+      values.push(body.email);
+    }
+    if (body.last_login !== undefined) {
+      updates.push('updated_at = datetime("now")');
+    }
+    
+    if (updates.length === 0) {
+      return c.json({ error: 'No fields to update' }, 400);
+    }
+    
+    values.push(userId);
+    await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
+    
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('User update error:', err);
+    return c.json({ error: 'Failed to update user' }, 500);
+  }
+});
+
+// =============================================================================
+// BLOG ROUTES (for API worker to call via service binding)
+// Uses BLOG_DB for posts storage
+// =============================================================================
+
+// List published posts
+app.get('/blog/posts', async (c) => {
+  const db = c.env.BLOG_DB;
+  
+  if (!db) {
+    return c.json({ error: 'BLOG_DB not configured' }, 501);
+  }
+  
+  try {
+    const { results } = await db.prepare(`
+      SELECT id, slug, title, excerpt, author_id, created_at, published_at, status
+      FROM posts 
+      WHERE status = 'published' 
+      ORDER BY published_at DESC 
+      LIMIT 100
+    `).all();
+    
+    return c.json({ posts: results });
+  } catch (err: any) {
+    console.error('Blog posts list error:', err);
+    return c.json({ error: 'Failed to fetch posts' }, 500);
+  }
+});
+
+// Get single post by ID or slug
+app.get('/blog/posts/:idOrSlug', async (c) => {
+  const idOrSlug = c.req.param('idOrSlug');
+  const db = c.env.BLOG_DB;
+  
+  if (!db) {
+    return c.json({ error: 'BLOG_DB not configured' }, 501);
+  }
+  
+  try {
+    // Try by ID first, then by slug
+    let row = await db.prepare(`
+      SELECT id, slug, title, content, excerpt, author_id, created_at, published_at, status, featured_image_url
+      FROM posts WHERE id = ?
+    `).bind(idOrSlug).first();
+    
+    if (!row) {
+      row = await db.prepare(`
+        SELECT id, slug, title, content, excerpt, author_id, created_at, published_at, status, featured_image_url
+        FROM posts WHERE slug = ?
+      `).bind(idOrSlug).first();
+    }
+    
+    if (!row) {
+      return c.json({ error: 'Post not found' }, 404);
+    }
+    
+    return c.json({ post: row });
+  } catch (err: any) {
+    console.error('Blog post fetch error:', err);
+    return c.json({ error: 'Failed to fetch post' }, 500);
+  }
+});
+
+// Create new post
+app.post('/blog/posts', async (c) => {
+  const db = c.env.BLOG_DB;
+  
+  if (!db) {
+    return c.json({ error: 'BLOG_DB not configured' }, 501);
+  }
+  
+  try {
+    const body = await c.req.json();
+    const { title, content, slug, excerpt, author_id, status, featured_image_url } = body;
+    
+    if (!title || !content || !author_id) {
+      return c.json({ error: 'title, content, and author_id required' }, 400);
+    }
+    
+    const id = crypto.randomUUID();
+    const postSlug = slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
+    const postExcerpt = excerpt || content.slice(0, 320);
+    const now = Math.floor(Date.now() / 1000);
+    
+    await db.prepare(`
+      INSERT INTO posts (id, title, slug, content, excerpt, author_id, status, featured_image_url, created_at, updated_at, published_at)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      id, 
+      title, 
+      postSlug, 
+      content, 
+      postExcerpt, 
+      author_id, 
+      status || 'draft',
+      featured_image_url || null,
+      now,
+      now,
+      status === 'published' ? now : null
+    ).run();
+    
+    return c.json({ success: true, id, slug: postSlug }, 201);
+  } catch (err: any) {
+    console.error('Blog post create error:', err);
+    return c.json({ error: 'Failed to create post', details: err.message }, 500);
+  }
+});
+
+// Update post
+app.patch('/blog/posts/:id', async (c) => {
+  const postId = c.req.param('id');
+  const db = c.env.BLOG_DB;
+  
+  if (!db) {
+    return c.json({ error: 'BLOG_DB not configured' }, 501);
+  }
+  
+  try {
+    const body = await c.req.json();
+    const updates: string[] = [];
+    const values: any[] = [];
+    
+    if (body.title !== undefined) {
+      updates.push('title = ?');
+      values.push(body.title);
+    }
+    if (body.content !== undefined) {
+      updates.push('content = ?');
+      values.push(body.content);
+    }
+    if (body.excerpt !== undefined) {
+      updates.push('excerpt = ?');
+      values.push(body.excerpt);
+    }
+    if (body.slug !== undefined) {
+      updates.push('slug = ?');
+      values.push(body.slug);
+    }
+    if (body.status !== undefined) {
+      updates.push('status = ?');
+      values.push(body.status);
+      if (body.status === 'published') {
+        updates.push('published_at = ?');
+        values.push(Math.floor(Date.now() / 1000));
+      }
+    }
+    if (body.featured_image_url !== undefined) {
+      updates.push('featured_image_url = ?');
+      values.push(body.featured_image_url);
+    }
+    
+    updates.push('updated_at = ?');
+    values.push(Math.floor(Date.now() / 1000));
+    
+    values.push(postId);
+    await db.prepare(`UPDATE posts SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
+    
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('Blog post update error:', err);
+    return c.json({ error: 'Failed to update post' }, 500);
+  }
+});
+
+// Delete post
+app.delete('/blog/posts/:id', async (c) => {
+  const postId = c.req.param('id');
+  const db = c.env.BLOG_DB;
+  
+  if (!db) {
+    return c.json({ error: 'BLOG_DB not configured' }, 501);
+  }
+  
+  try {
+    await db.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('Blog post delete error:', err);
+    return c.json({ error: 'Failed to delete post' }, 500);
   }
 });
 
