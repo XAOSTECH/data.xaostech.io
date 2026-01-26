@@ -6,6 +6,7 @@ interface Env {
   DB: D1Database;
   ACCOUNT_DB: D1Database;
   BLOG_DB: D1Database;
+  CHAT_DB: D1Database;
   IMG: R2Bucket;
   BLOG_MEDIA: R2Bucket;
   CONSENT_KV: KVNamespace;
@@ -39,17 +40,17 @@ const app = new Hono<{ Bindings: Env }>();
 // the Response, which can cause stream consumption issues
 app.use('*', async (c, next) => {
   await next();
-  
+
   const res = c.res;
   if (!res) return;
-  
+
   // Get content-type to check if binary
   const contentType = res.headers.get('content-type') || '';
-  const isBinary = contentType.startsWith('image/') || 
-                   contentType.startsWith('audio/') || 
-                   contentType.startsWith('video/') ||
-                   contentType.startsWith('application/octet-stream');
-  
+  const isBinary = contentType.startsWith('image/') ||
+    contentType.startsWith('audio/') ||
+    contentType.startsWith('video/') ||
+    contentType.startsWith('application/octet-stream');
+
   // For binary responses, add security headers to existing response
   // without re-wrapping (avoids stream consumption issues)
   const secHeaders = getSecurityHeaders();
@@ -59,13 +60,13 @@ app.use('*', async (c, next) => {
     }
     return res;
   }
-  
+
   // For other responses, create new response with security headers
   const headers = new Headers(res.headers);
   for (const k of Object.keys(secHeaders)) {
     headers.set(k, secHeaders[k]);
   }
-  
+
   return new Response(res.body, {
     status: res.status,
     statusText: res.statusText,
@@ -592,7 +593,7 @@ app.post('/api/session', async (c) => {
 
 app.get('/assets/:filename', async (c) => {
   const filename = c.req.param('filename');
-  
+
   if (!filename) {
     return c.json({ error: 'Filename required' }, 400);
   }
@@ -666,7 +667,7 @@ app.get('/assets/:filename', async (c) => {
 
 app.post('/blog-media/upload', async (c) => {
   const userId = c.req.header('X-User-ID');
-  
+
   if (!userId) {
     return c.json({ error: 'User ID required' }, 401);
   }
@@ -718,14 +719,14 @@ app.post('/blog-media/upload', async (c) => {
 
 app.get('/blog-media/:key', async (c) => {
   const key = c.req.param('key');
-  
+
   if (!key) {
     return c.json({ error: 'Key required' }, 400);
   }
 
   try {
     const object = await c.env.BLOG_MEDIA.get(key);
-    
+
     if (!object) {
       return c.json({ error: 'Media not found' }, 404);
     }
@@ -734,7 +735,7 @@ app.get('/blog-media/:key', async (c) => {
     const headers = new Headers();
     object.writeHttpMetadata(headers);
     headers.set('Cache-Control', 'public, max-age=31536000');
-    
+
     return new Response(object.body, {
       status: 200,
       headers
@@ -754,21 +755,21 @@ app.get('/blog-media/:key', async (c) => {
 app.get('/users/github/:githubId', async (c) => {
   const githubId = c.req.param('githubId');
   const db = c.env.ACCOUNT_DB;
-  
+
   if (!db) {
     return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
-  
+
   try {
     const row = await db.prepare(`
       SELECT id, username, email, avatar_url, role, is_admin, github_id, github_username, github_avatar_url
       FROM users WHERE github_id = ?
     `).bind(githubId).first();
-    
+
     if (!row) {
       return c.json({ found: false }, 200);
     }
-    
+
     return c.json({ found: true, user: row });
   } catch (err: any) {
     console.error('User lookup error:', err);
@@ -780,21 +781,21 @@ app.get('/users/github/:githubId', async (c) => {
 app.get('/users/email/:email', async (c) => {
   const email = decodeURIComponent(c.req.param('email'));
   const db = c.env.ACCOUNT_DB;
-  
+
   if (!db) {
     return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
-  
+
   try {
     const row = await db.prepare(`
       SELECT id, username, email, avatar_url, role, is_admin, password_hash
       FROM users WHERE email = ?
     `).bind(email).first();
-    
+
     if (!row) {
       return c.json({ found: false }, 200);
     }
-    
+
     return c.json({ found: true, user: row });
   } catch (err: any) {
     console.error('User email lookup error:', err);
@@ -806,21 +807,21 @@ app.get('/users/email/:email', async (c) => {
 app.get('/users/:userId', async (c) => {
   const userId = c.req.param('userId');
   const db = c.env.ACCOUNT_DB;
-  
+
   if (!db) {
     return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
-  
+
   try {
     const row = await db.prepare(`
       SELECT id, username, email, avatar_url, role, is_admin, github_id, created_at
       FROM users WHERE id = ?
     `).bind(userId).first();
-    
+
     if (!row) {
       return c.json({ error: 'User not found' }, 404);
     }
-    
+
     return c.json({ user: row });
   } catch (err: any) {
     console.error('User fetch error:', err);
@@ -831,15 +832,15 @@ app.get('/users/:userId', async (c) => {
 // Create new user (GitHub OAuth signup or email/password registration)
 app.post('/users', async (c) => {
   const db = c.env.ACCOUNT_DB;
-  
+
   if (!db) {
     return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
-  
+
   try {
     const body = await c.req.json();
     const { id, github_id, username, email, avatar_url, github_username, github_avatar_url, role, password_hash } = body;
-    
+
     // Support both OAuth and password-based registration
     if (password_hash) {
       // Email/password registration
@@ -854,7 +855,7 @@ app.post('/users', async (c) => {
         VALUES (?, ?, ?, ?, ?, ?, ?, ?, datetime('now'), datetime('now'))
       `).bind(id, github_id, username, email, avatar_url, github_username || '', github_avatar_url || '', role || 'user').run();
     }
-    
+
     return c.json({ success: true, userId: id }, 201);
   } catch (err: any) {
     console.error('User create error:', err);
@@ -866,16 +867,16 @@ app.post('/users', async (c) => {
 app.patch('/users/:userId', async (c) => {
   const userId = c.req.param('userId');
   const db = c.env.ACCOUNT_DB;
-  
+
   if (!db) {
     return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
-  
+
   try {
     const body = await c.req.json();
     const updates: string[] = [];
     const values: any[] = [];
-    
+
     // Only update provided fields
     if (body.github_username !== undefined) {
       updates.push('github_username = ?');
@@ -900,14 +901,14 @@ app.patch('/users/:userId', async (c) => {
     if (body.last_login !== undefined) {
       updates.push('updated_at = datetime("now")');
     }
-    
+
     if (updates.length === 0) {
       return c.json({ error: 'No fields to update' }, 400);
     }
-    
+
     values.push(userId);
     await db.prepare(`UPDATE users SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
-    
+
     return c.json({ success: true });
   } catch (err: any) {
     console.error('User update error:', err);
@@ -923,11 +924,11 @@ app.patch('/users/:userId', async (c) => {
 // List published posts
 app.get('/blog/posts', async (c) => {
   const db = c.env.BLOG_DB;
-  
+
   if (!db) {
     return c.json({ error: 'BLOG_DB not configured' }, 501);
   }
-  
+
   try {
     const { results } = await db.prepare(`
       SELECT id, slug, title, excerpt, author_id, created_at, published_at, status
@@ -936,7 +937,7 @@ app.get('/blog/posts', async (c) => {
       ORDER BY published_at DESC 
       LIMIT 100
     `).all();
-    
+
     return c.json({ posts: results });
   } catch (err: any) {
     console.error('Blog posts list error:', err);
@@ -948,29 +949,29 @@ app.get('/blog/posts', async (c) => {
 app.get('/blog/posts/:idOrSlug', async (c) => {
   const idOrSlug = c.req.param('idOrSlug');
   const db = c.env.BLOG_DB;
-  
+
   if (!db) {
     return c.json({ error: 'BLOG_DB not configured' }, 501);
   }
-  
+
   try {
     // Try by ID first, then by slug
     let row = await db.prepare(`
       SELECT id, slug, title, content, excerpt, author_id, created_at, published_at, status, featured_image_url
       FROM posts WHERE id = ?
     `).bind(idOrSlug).first();
-    
+
     if (!row) {
       row = await db.prepare(`
         SELECT id, slug, title, content, excerpt, author_id, created_at, published_at, status, featured_image_url
         FROM posts WHERE slug = ?
       `).bind(idOrSlug).first();
     }
-    
+
     if (!row) {
       return c.json({ error: 'Post not found' }, 404);
     }
-    
+
     return c.json({ post: row });
   } catch (err: any) {
     console.error('Blog post fetch error:', err);
@@ -981,41 +982,41 @@ app.get('/blog/posts/:idOrSlug', async (c) => {
 // Create new post
 app.post('/blog/posts', async (c) => {
   const db = c.env.BLOG_DB;
-  
+
   if (!db) {
     return c.json({ error: 'BLOG_DB not configured' }, 501);
   }
-  
+
   try {
     const body = await c.req.json();
     const { title, content, slug, excerpt, author_id, status, featured_image_url } = body;
-    
+
     if (!title || !content || !author_id) {
       return c.json({ error: 'title, content, and author_id required' }, 400);
     }
-    
+
     const id = crypto.randomUUID();
     const postSlug = slug || title.toLowerCase().replace(/[^a-z0-9]+/g, '-').replace(/(^-|-$)/g, '');
     const postExcerpt = excerpt || content.slice(0, 320);
     const now = Math.floor(Date.now() / 1000);
-    
+
     await db.prepare(`
       INSERT INTO posts (id, title, slug, content, excerpt, author_id, status, featured_image_url, created_at, updated_at, published_at)
       VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
     `).bind(
-      id, 
-      title, 
-      postSlug, 
-      content, 
-      postExcerpt, 
-      author_id, 
+      id,
+      title,
+      postSlug,
+      content,
+      postExcerpt,
+      author_id,
       status || 'draft',
       featured_image_url || null,
       now,
       now,
       status === 'published' ? now : null
     ).run();
-    
+
     return c.json({ success: true, id, slug: postSlug }, 201);
   } catch (err: any) {
     console.error('Blog post create error:', err);
@@ -1027,16 +1028,16 @@ app.post('/blog/posts', async (c) => {
 app.patch('/blog/posts/:id', async (c) => {
   const postId = c.req.param('id');
   const db = c.env.BLOG_DB;
-  
+
   if (!db) {
     return c.json({ error: 'BLOG_DB not configured' }, 501);
   }
-  
+
   try {
     const body = await c.req.json();
     const updates: string[] = [];
     const values: any[] = [];
-    
+
     if (body.title !== undefined) {
       updates.push('title = ?');
       values.push(body.title);
@@ -1065,13 +1066,13 @@ app.patch('/blog/posts/:id', async (c) => {
       updates.push('featured_image_url = ?');
       values.push(body.featured_image_url);
     }
-    
+
     updates.push('updated_at = ?');
     values.push(Math.floor(Date.now() / 1000));
-    
+
     values.push(postId);
     await db.prepare(`UPDATE posts SET ${updates.join(', ')} WHERE id = ?`).bind(...values).run();
-    
+
     return c.json({ success: true });
   } catch (err: any) {
     console.error('Blog post update error:', err);
@@ -1083,17 +1084,184 @@ app.patch('/blog/posts/:id', async (c) => {
 app.delete('/blog/posts/:id', async (c) => {
   const postId = c.req.param('id');
   const db = c.env.BLOG_DB;
-  
+
   if (!db) {
     return c.json({ error: 'BLOG_DB not configured' }, 501);
   }
-  
+
   try {
     await db.prepare('DELETE FROM posts WHERE id = ?').bind(postId).run();
     return c.json({ success: true });
   } catch (err: any) {
     console.error('Blog post delete error:', err);
     return c.json({ error: 'Failed to delete post' }, 500);
+  }
+});
+
+// =============================================================================
+// CHAT ROUTES (for API worker to call via service binding)
+// Uses CHAT_DB for messages storage
+// =============================================================================
+
+// Get messages for a user or room
+app.get('/chat/messages', async (c) => {
+  const db = c.env.CHAT_DB;
+  
+  if (!db) {
+    return c.json({ error: 'CHAT_DB not configured' }, 501);
+  }
+  
+  try {
+    const userId = c.req.query('user_id');
+    const roomId = c.req.query('room_id');
+    const limit = parseInt(c.req.query('limit') || '50');
+    const offset = parseInt(c.req.query('offset') || '0');
+    
+    let query: string;
+    let params: any[];
+    
+    if (roomId) {
+      query = `SELECT * FROM messages WHERE room_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+      params = [roomId, limit, offset];
+    } else if (userId) {
+      query = `SELECT * FROM messages WHERE user_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`;
+      params = [userId, limit, offset];
+    } else {
+      return c.json({ error: 'user_id or room_id required' }, 400);
+    }
+    
+    const { results } = await db.prepare(query).bind(...params).all();
+    return c.json({ messages: results, total: results.length });
+  } catch (err: any) {
+    console.error('Chat messages fetch error:', err);
+    return c.json({ error: 'Failed to fetch messages' }, 500);
+  }
+});
+
+// Create a new message
+app.post('/chat/messages', async (c) => {
+  const db = c.env.CHAT_DB;
+  
+  if (!db) {
+    return c.json({ error: 'CHAT_DB not configured' }, 501);
+  }
+  
+  try {
+    const body = await c.req.json();
+    const { room_id, user_id, content, type } = body;
+    
+    if (!room_id || !user_id || !content) {
+      return c.json({ error: 'room_id, user_id, and content required' }, 400);
+    }
+    
+    const id = crypto.randomUUID();
+    await db.prepare(`
+      INSERT INTO messages (id, room_id, user_id, content, type, created_at)
+      VALUES (?, ?, ?, ?, ?, datetime('now'))
+    `).bind(id, room_id, user_id, content, type || 'text').run();
+    
+    return c.json({ success: true, id }, 201);
+  } catch (err: any) {
+    console.error('Chat message create error:', err);
+    return c.json({ error: 'Failed to create message' }, 500);
+  }
+});
+
+// Moderate a message (delete or flag)
+app.post('/chat/moderation', async (c) => {
+  const db = c.env.CHAT_DB;
+  
+  if (!db) {
+    return c.json({ error: 'CHAT_DB not configured' }, 501);
+  }
+  
+  try {
+    const body = await c.req.json();
+    const { messageId, action, reason, adminId } = body;
+    
+    if (!messageId || !action) {
+      return c.json({ error: 'messageId and action required' }, 400);
+    }
+    
+    if (action === 'delete') {
+      await db.prepare(`UPDATE messages SET deleted_at = datetime('now') WHERE id = ?`).bind(messageId).run();
+    } else if (action === 'flag') {
+      // If you have a flagged column, update it
+      // For now, just log
+      console.log(`Message ${messageId} flagged by ${adminId}: ${reason}`);
+    }
+    
+    return c.json({ success: true, action, messageId });
+  } catch (err: any) {
+    console.error('Chat moderation error:', err);
+    return c.json({ error: 'Failed to moderate message' }, 500);
+  }
+});
+
+// Delete a chat room
+app.delete('/chat/rooms/:id', async (c) => {
+  const db = c.env.CHAT_DB;
+  const roomId = c.req.param('id');
+  
+  if (!db) {
+    return c.json({ error: 'CHAT_DB not configured' }, 501);
+  }
+  
+  try {
+    // Delete messages first (foreign key constraint)
+    await db.prepare('DELETE FROM messages WHERE room_id = ?').bind(roomId).run();
+    await db.prepare('DELETE FROM chat_rooms WHERE id = ?').bind(roomId).run();
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('Chat room delete error:', err);
+    return c.json({ error: 'Failed to delete room' }, 500);
+  }
+});
+
+// List chat rooms
+app.get('/chat/rooms', async (c) => {
+  const db = c.env.CHAT_DB;
+  
+  if (!db) {
+    return c.json({ error: 'CHAT_DB not configured' }, 501);
+  }
+  
+  try {
+    const { results } = await db.prepare(`
+      SELECT id, name, description, type, owner_id, created_at
+      FROM chat_rooms
+      ORDER BY created_at DESC
+      LIMIT 100
+    `).all();
+    return c.json({ rooms: results });
+  } catch (err: any) {
+    console.error('Chat rooms list error:', err);
+    return c.json({ error: 'Failed to fetch rooms' }, 500);
+  }
+});
+
+// Get messages for a specific room
+app.get('/chat/rooms/:id/messages', async (c) => {
+  const db = c.env.CHAT_DB;
+  const roomId = c.req.param('id');
+  
+  if (!db) {
+    return c.json({ error: 'CHAT_DB not configured' }, 501);
+  }
+  
+  try {
+    const limit = parseInt(c.req.query('limit') || '50');
+    const { results } = await db.prepare(`
+      SELECT id, room_id, user_id, content, type, created_at
+      FROM messages
+      WHERE room_id = ?
+      ORDER BY created_at ASC
+      LIMIT ?
+    `).bind(roomId, limit).all();
+    return c.json(results);
+  } catch (err: any) {
+    console.error('Room messages fetch error:', err);
+    return c.json({ error: 'Failed to fetch messages' }, 500);
   }
 });
 
