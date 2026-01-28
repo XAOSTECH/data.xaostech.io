@@ -972,7 +972,14 @@ app.get('/blog/posts/:idOrSlug', async (c) => {
       return c.json({ error: 'Post not found' }, 404);
     }
 
-    return c.json({ post: row });
+    // Fetch approved comments for the post
+    const commentsResult = await db.prepare(`
+      SELECT id, content, author_name, image_url, audio_url, created_at, status
+      FROM comments WHERE post_id = ? AND status = 'approved'
+      ORDER BY created_at DESC
+    `).bind(row.id).all();
+
+    return c.json({ post: row, comments: commentsResult.results || [] });
   } catch (err: any) {
     console.error('Blog post fetch error:', err);
     return c.json({ error: 'Failed to fetch post' }, 500);
@@ -1106,20 +1113,20 @@ app.delete('/blog/posts/:id', async (c) => {
 // Get messages for a user or room
 app.get('/chat/messages', async (c) => {
   const db = c.env.CHAT_DB;
-  
+
   if (!db) {
     return c.json({ error: 'CHAT_DB not configured' }, 501);
   }
-  
+
   try {
     const userId = c.req.query('user_id');
     const roomId = c.req.query('room_id');
     const limit = parseInt(c.req.query('limit') || '50');
     const offset = parseInt(c.req.query('offset') || '0');
-    
+
     let query: string;
     let params: any[];
-    
+
     if (roomId) {
       query = `SELECT * FROM messages WHERE room_id = ? ORDER BY created_at DESC LIMIT ? OFFSET ?`;
       params = [roomId, limit, offset];
@@ -1129,7 +1136,7 @@ app.get('/chat/messages', async (c) => {
     } else {
       return c.json({ error: 'user_id or room_id required' }, 400);
     }
-    
+
     const { results } = await db.prepare(query).bind(...params).all();
     return c.json({ messages: results, total: results.length });
   } catch (err: any) {
@@ -1141,25 +1148,25 @@ app.get('/chat/messages', async (c) => {
 // Create a new message
 app.post('/chat/messages', async (c) => {
   const db = c.env.CHAT_DB;
-  
+
   if (!db) {
     return c.json({ error: 'CHAT_DB not configured' }, 501);
   }
-  
+
   try {
     const body = await c.req.json();
     const { room_id, user_id, content, type } = body;
-    
+
     if (!room_id || !user_id || !content) {
       return c.json({ error: 'room_id, user_id, and content required' }, 400);
     }
-    
+
     const id = crypto.randomUUID();
     await db.prepare(`
       INSERT INTO messages (id, room_id, user_id, content, type, created_at)
       VALUES (?, ?, ?, ?, ?, datetime('now'))
     `).bind(id, room_id, user_id, content, type || 'text').run();
-    
+
     return c.json({ success: true, id }, 201);
   } catch (err: any) {
     console.error('Chat message create error:', err);
@@ -1170,19 +1177,19 @@ app.post('/chat/messages', async (c) => {
 // Moderate a message (delete or flag)
 app.post('/chat/moderation', async (c) => {
   const db = c.env.CHAT_DB;
-  
+
   if (!db) {
     return c.json({ error: 'CHAT_DB not configured' }, 501);
   }
-  
+
   try {
     const body = await c.req.json();
     const { messageId, action, reason, adminId } = body;
-    
+
     if (!messageId || !action) {
       return c.json({ error: 'messageId and action required' }, 400);
     }
-    
+
     if (action === 'delete') {
       await db.prepare(`UPDATE messages SET deleted_at = datetime('now') WHERE id = ?`).bind(messageId).run();
     } else if (action === 'flag') {
@@ -1190,7 +1197,7 @@ app.post('/chat/moderation', async (c) => {
       // For now, just log
       console.log(`Message ${messageId} flagged by ${adminId}: ${reason}`);
     }
-    
+
     return c.json({ success: true, action, messageId });
   } catch (err: any) {
     console.error('Chat moderation error:', err);
@@ -1202,11 +1209,11 @@ app.post('/chat/moderation', async (c) => {
 app.delete('/chat/rooms/:id', async (c) => {
   const db = c.env.CHAT_DB;
   const roomId = c.req.param('id');
-  
+
   if (!db) {
     return c.json({ error: 'CHAT_DB not configured' }, 501);
   }
-  
+
   try {
     // Delete messages first (foreign key constraint)
     await db.prepare('DELETE FROM messages WHERE room_id = ?').bind(roomId).run();
@@ -1221,11 +1228,11 @@ app.delete('/chat/rooms/:id', async (c) => {
 // List chat rooms
 app.get('/chat/rooms', async (c) => {
   const db = c.env.CHAT_DB;
-  
+
   if (!db) {
     return c.json({ error: 'CHAT_DB not configured' }, 501);
   }
-  
+
   try {
     const { results } = await db.prepare(`
       SELECT id, name, description, type, owner_id, created_at
@@ -1244,11 +1251,11 @@ app.get('/chat/rooms', async (c) => {
 app.get('/chat/rooms/:id/messages', async (c) => {
   const db = c.env.CHAT_DB;
   const roomId = c.req.param('id');
-  
+
   if (!db) {
     return c.json({ error: 'CHAT_DB not configured' }, 501);
   }
-  
+
   try {
     const limit = parseInt(c.req.query('limit') || '50');
     const { results } = await db.prepare(`
