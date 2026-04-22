@@ -1272,4 +1272,450 @@ app.get('/chat/rooms/:id/messages', async (c) => {
   }
 });
 
+// =============================================================================
+// ACCOUNT FEATURE ROUTES (called by api.xaostech.io via service binding)
+// All operations are user-scoped via the user_id query param or path segment.
+// Uses ACCOUNT_DB.
+// =============================================================================
+
+const ensureAccountDb = (c: any) => {
+  const db = c.env.ACCOUNT_DB as D1Database | undefined;
+  if (!db) {
+    return { db: null, error: c.json({ error: 'ACCOUNT_DB not configured' }, 501) };
+  }
+  return { db, error: null as any };
+};
+
+// ---- API Keys ----
+app.get('/account/api-keys', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const userId = c.req.query('user_id');
+  if (!userId) return c.json({ error: 'user_id required' }, 400);
+  try {
+    const { results } = await db!.prepare(
+      `SELECT id, name, key_prefix, scopes, rate_limit, active, created_at, last_used_at, use_count
+       FROM user_api_keys WHERE user_id = ? ORDER BY created_at DESC`
+    ).bind(userId).all();
+    return c.json({ keys: results || [] });
+  } catch (err: any) {
+    console.error('api-keys list error:', err);
+    return c.json({ error: 'Failed to fetch keys' }, 500);
+  }
+});
+
+app.post('/account/api-keys', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  try {
+    const body = await c.req.json();
+    const { id, user_id, name, key_prefix, key_hash, scopes } = body;
+    if (!id || !user_id || !name || !key_prefix || !key_hash) {
+      return c.json({ error: 'id, user_id, name, key_prefix, key_hash required' }, 400);
+    }
+    await db!.prepare(`
+      INSERT INTO user_api_keys (id, user_id, name, key_prefix, key_hash, scopes, rate_limit, active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 60, 1, datetime('now'))
+    `).bind(id, user_id, name, key_prefix, key_hash, JSON.stringify(scopes || ['read', 'write'])).run();
+    return c.json({ success: true, id }, 201);
+  } catch (err: any) {
+    console.error('api-keys create error:', err);
+    return c.json({ error: 'Failed to create key', details: err.message }, 500);
+  }
+});
+
+app.get('/account/api-keys/:id', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const userId = c.req.query('user_id');
+  const id = c.req.param('id');
+  if (!userId) return c.json({ error: 'user_id required' }, 400);
+  try {
+    const row = await db!.prepare(
+      `SELECT id, name, key_prefix, scopes, rate_limit, active, created_at, last_used_at, use_count
+       FROM user_api_keys WHERE id = ? AND user_id = ?`
+    ).bind(id, userId).first();
+    if (!row) return c.json({ error: 'Not found' }, 404);
+    return c.json({ key: row });
+  } catch (err: any) {
+    console.error('api-keys get error:', err);
+    return c.json({ error: 'Failed to fetch key' }, 500);
+  }
+});
+
+app.patch('/account/api-keys/:id', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const userId = c.req.query('user_id');
+  const id = c.req.param('id');
+  if (!userId) return c.json({ error: 'user_id required' }, 400);
+  try {
+    const body = await c.req.json();
+    const updates: string[] = [];
+    const values: any[] = [];
+    if (body.name !== undefined) { updates.push('name = ?'); values.push(body.name); }
+    if (body.active !== undefined) { updates.push('active = ?'); values.push(body.active ? 1 : 0); }
+    if (body.scopes !== undefined) { updates.push('scopes = ?'); values.push(JSON.stringify(body.scopes)); }
+    if (updates.length === 0) return c.json({ error: 'No fields to update' }, 400);
+    updates.push("updated_at = datetime('now')");
+    values.push(id, userId);
+    await db!.prepare(`UPDATE user_api_keys SET ${updates.join(', ')} WHERE id = ? AND user_id = ?`).bind(...values).run();
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('api-keys update error:', err);
+    return c.json({ error: 'Failed to update key' }, 500);
+  }
+});
+
+app.delete('/account/api-keys/:id', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const userId = c.req.query('user_id');
+  const id = c.req.param('id');
+  if (!userId) return c.json({ error: 'user_id required' }, 400);
+  try {
+    await db!.prepare(`DELETE FROM user_api_keys WHERE id = ? AND user_id = ?`).bind(id, userId).run();
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('api-keys delete error:', err);
+    return c.json({ error: 'Failed to delete key' }, 500);
+  }
+});
+
+// ---- Profile (extended) ----
+// Username/profile field updates use PATCH /users/:userId already.
+// These routes serve the social profile pages (timeline + friends).
+
+app.get('/account/profile/posts', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const userId = c.req.query('user_id');
+  const limit = parseInt(c.req.query('limit') || '10');
+  if (!userId) return c.json({ error: 'user_id required' }, 400);
+  try {
+    const { results } = await db!.prepare(`
+      SELECT p.*, u.username, u.avatar_url
+      FROM posts p JOIN users u ON p.author_id = u.id
+      WHERE p.author_id = ? AND p.status = 'published'
+      ORDER BY p.created_at DESC LIMIT ?
+    `).bind(userId, limit).all();
+    return c.json({ posts: results || [] });
+  } catch (err: any) {
+    console.error('profile posts error:', err);
+    return c.json({ posts: [], error: err.message }, 500);
+  }
+});
+
+app.get('/account/profile/friends', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const userId = c.req.query('user_id');
+  const limit = parseInt(c.req.query('limit') || '10');
+  if (!userId) return c.json({ error: 'user_id required' }, 400);
+  try {
+    const { results } = await db!.prepare(`
+      SELECT u.id, u.username, u.avatar_url, u.role,
+             f.status, f.created_at as friend_since
+      FROM friendships f
+      JOIN users u ON (CASE WHEN f.requester_id = ? THEN f.addressee_id ELSE f.requester_id END) = u.id
+      WHERE (f.requester_id = ? OR f.addressee_id = ?) AND f.status = 'accepted'
+      ORDER BY f.created_at DESC LIMIT ?
+    `).bind(userId, userId, userId, limit).all();
+    return c.json({ friends: results || [] });
+  } catch (err: any) {
+    console.error('profile friends error:', err);
+    return c.json({ friends: [], error: err.message }, 500);
+  }
+});
+
+app.get('/account/profile/feed', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const ids = (c.req.query('user_ids') || '').split(',').map(s => s.trim()).filter(Boolean);
+  const limit = parseInt(c.req.query('limit') || '20');
+  if (ids.length === 0) return c.json({ posts: [] });
+  try {
+    const placeholders = ids.map(() => '?').join(',');
+    const { results } = await db!.prepare(`
+      SELECT p.*, u.username, u.avatar_url
+      FROM posts p JOIN users u ON p.author_id = u.id
+      WHERE p.author_id IN (${placeholders})
+        AND p.status = 'published'
+        AND p.visibility IN ('public', 'friends')
+      ORDER BY p.created_at DESC LIMIT ?
+    `).bind(...ids, limit).all();
+    return c.json({ posts: results || [] });
+  } catch (err: any) {
+    console.error('profile feed error:', err);
+    return c.json({ posts: [], error: err.message }, 500);
+  }
+});
+
+app.get('/account/profile/settings', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const userId = c.req.query('user_id');
+  if (!userId) return c.json({ error: 'user_id required' }, 400);
+  try {
+    const row = await db!.prepare(
+      `SELECT user_id, display_name, bio, location, website, occupation, company, birthday,
+              theme, cover_image_url, profile_music_url, last_active_at
+       FROM user_profiles WHERE user_id = ?`
+    ).bind(userId).first();
+    return c.json({ settings: row || null });
+  } catch (err: any) {
+    console.error('profile settings error:', err);
+    return c.json({ settings: null, error: err.message }, 500);
+  }
+});
+
+// ---- GDPR ----
+app.post('/account/gdpr/deletions', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  try {
+    const body = await c.req.json();
+    const { user_id, reason } = body;
+    if (!user_id) return c.json({ error: 'user_id required' }, 400);
+
+    const existing = await db!.prepare(
+      `SELECT id FROM gdpr_deletions WHERE user_id = ? AND status = 'requested'`
+    ).bind(user_id).first();
+    if (existing) {
+      return c.json({ error: 'Deletion already requested. 30-day grace period applies.' }, 429);
+    }
+
+    const id = crypto.randomUUID();
+    await db!.prepare(`
+      INSERT INTO gdpr_deletions (id, user_id, reason, status, requested_at)
+      VALUES (?, ?, ?, 'requested', datetime('now'))
+    `).bind(id, user_id, reason || null).run();
+
+    return c.json({ success: true, id }, 201);
+  } catch (err: any) {
+    console.error('gdpr request error:', err);
+    return c.json({ error: 'Failed to record deletion request', details: err.message }, 500);
+  }
+});
+
+// ---- Family / Children ----
+app.get('/account/family/children', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const parentId = c.req.query('parent_id');
+  if (!parentId) return c.json({ error: 'parent_id required' }, 400);
+  try {
+    const { results } = await db!.prepare(`
+      SELECT ca.*, u.email as child_email, u.avatar_url as child_avatar,
+             pc.content_filter_level, pc.daily_time_limit, pc.weekly_time_limit,
+             pc.can_post_content, pc.can_comment, pc.require_approval_for_posts
+      FROM child_accounts ca
+      JOIN users u ON ca.child_id = u.id
+      LEFT JOIN parental_controls pc ON ca.child_id = pc.child_id
+      WHERE ca.parent_id = ? ORDER BY ca.created_at DESC
+    `).bind(parentId).all();
+    return c.json({ children: results || [] });
+  } catch (err: any) {
+    console.error('family children list error:', err);
+    return c.json({ children: [], error: err.message }, 500);
+  }
+});
+
+app.get('/account/family/children/:id', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const parentId = c.req.query('parent_id');
+  const childId = c.req.param('id');
+  if (!parentId) return c.json({ error: 'parent_id required' }, 400);
+  try {
+    const row = await db!.prepare(`
+      SELECT ca.*, u.email as child_email, u.avatar_url as child_avatar, u.username as child_username,
+             pc.content_filter_level, pc.daily_time_limit, pc.weekly_time_limit,
+             pc.can_post_content, pc.can_comment, pc.require_approval_for_posts
+      FROM child_accounts ca
+      JOIN users u ON ca.child_id = u.id
+      LEFT JOIN parental_controls pc ON ca.child_id = pc.child_id
+      WHERE ca.parent_id = ? AND ca.child_id = ?
+    `).bind(parentId, childId).first();
+    if (!row) return c.json({ error: 'Not found' }, 404);
+    return c.json({ child: row });
+  } catch (err: any) {
+    console.error('family child get error:', err);
+    return c.json({ error: 'Failed to fetch child' }, 500);
+  }
+});
+
+app.get('/account/family/approvals', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const parentId = c.req.query('parent_id');
+  const limit = parseInt(c.req.query('limit') || '20');
+  if (!parentId) return c.json({ error: 'parent_id required' }, 400);
+  try {
+    const { results } = await db!.prepare(`
+      SELECT pa.*, ca.child_name
+      FROM parent_approvals pa
+      JOIN child_accounts ca ON pa.child_id = ca.child_id
+      WHERE pa.parent_id = ? AND pa.status = 'pending'
+      ORDER BY pa.created_at DESC LIMIT ?
+    `).bind(parentId, limit).all();
+    return c.json({ approvals: results || [] });
+  } catch (err: any) {
+    console.error('family approvals error:', err);
+    return c.json({ approvals: [], error: err.message }, 500);
+  }
+});
+
+app.post('/account/family/children', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  try {
+    const body = await c.req.json();
+    const {
+      parent_id, child_id, child_name, username, email, password_hash,
+      birth_year, content_filter_level, daily_time_limit, weekly_time_limit,
+      can_post_content, can_comment, require_approval_for_posts,
+    } = body;
+    if (!parent_id || !child_id || !child_name) {
+      return c.json({ error: 'parent_id, child_id, child_name required' }, 400);
+    }
+
+    if (username && password_hash) {
+      await db!.prepare(`
+        INSERT INTO users (id, username, email, password_hash, role, created_at, updated_at)
+        VALUES (?, ?, ?, ?, 'child', datetime('now'), datetime('now'))
+      `).bind(child_id, username, email || null, password_hash).run();
+    }
+
+    await db!.prepare(`
+      INSERT INTO child_accounts (parent_id, child_id, child_name, birth_year, created_at)
+      VALUES (?, ?, ?, ?, datetime('now'))
+    `).bind(parent_id, child_id, child_name, birth_year || null).run();
+
+    await db!.prepare(`
+      INSERT INTO parental_controls
+        (child_id, parent_id, content_filter_level, daily_time_limit, weekly_time_limit,
+         can_post_content, can_comment, require_approval_for_posts)
+      VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+    `).bind(
+      child_id, parent_id,
+      content_filter_level || 'strict',
+      daily_time_limit ?? 60,
+      weekly_time_limit ?? 420,
+      can_post_content ? 1 : 0,
+      can_comment ? 1 : 0,
+      require_approval_for_posts ? 1 : 0,
+    ).run();
+
+    return c.json({ success: true, child_id }, 201);
+  } catch (err: any) {
+    console.error('family children create error:', err);
+    return c.json({ error: 'Failed to create child', details: err.message }, 500);
+  }
+});
+
+app.post('/account/family/approvals/:id/deny', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const parentId = c.req.query('parent_id');
+  const approvalId = c.req.param('id');
+  if (!parentId) return c.json({ error: 'parent_id required' }, 400);
+  try {
+    const pending = await db!.prepare(
+      `SELECT id, child_id, action_type, action_data FROM parent_approvals
+       WHERE id = ? AND parent_id = ? AND status = 'pending'`
+    ).bind(approvalId, parentId).first();
+    if (!pending) return c.json({ error: 'Approval not found or already processed' }, 404);
+
+    await db!.prepare(
+      `UPDATE parent_approvals SET status = 'denied', resolved_at = datetime('now') WHERE id = ?`
+    ).bind(approvalId).run();
+
+    if ((pending as any).action_type === 'post_create' && (pending as any).action_data) {
+      try {
+        const data = JSON.parse((pending as any).action_data);
+        if (data.post_id) {
+          await db!.prepare(`UPDATE posts SET status = 'denied' WHERE id = ?`).bind(data.post_id).run();
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('family deny error:', err);
+    return c.json({ error: 'Failed to deny approval' }, 500);
+  }
+});
+
+app.post('/account/family/approvals/:id/approve', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const parentId = c.req.query('parent_id');
+  const approvalId = c.req.param('id');
+  if (!parentId) return c.json({ error: 'parent_id required' }, 400);
+  try {
+    const pending = await db!.prepare(
+      `SELECT id, child_id, action_type, action_data FROM parent_approvals
+       WHERE id = ? AND parent_id = ? AND status = 'pending'`
+    ).bind(approvalId, parentId).first();
+    if (!pending) return c.json({ error: 'Approval not found or already processed' }, 404);
+
+    await db!.prepare(
+      `UPDATE parent_approvals SET status = 'approved', resolved_at = datetime('now') WHERE id = ?`
+    ).bind(approvalId).run();
+
+    if ((pending as any).action_type === 'post_create' && (pending as any).action_data) {
+      try {
+        const data = JSON.parse((pending as any).action_data);
+        if (data.post_id) {
+          await db!.prepare(`UPDATE posts SET status = 'published' WHERE id = ?`).bind(data.post_id).run();
+        }
+      } catch { /* ignore parse errors */ }
+    }
+
+    return c.json({ success: true });
+  } catch (err: any) {
+    console.error('family approve error:', err);
+    return c.json({ error: 'Failed to approve' }, 500);
+  }
+});
+
+// ---- Service Accounts ----
+app.get('/account/service-accounts', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  const userId = c.req.query('user_id');
+  if (!userId) return c.json({ error: 'user_id required' }, 400);
+  try {
+    const { results } = await db!.prepare(
+      `SELECT id, name, description, scopes, active, created_at, last_used_at
+       FROM service_accounts WHERE owner_id = ? ORDER BY created_at DESC`
+    ).bind(userId).all();
+    return c.json({ accounts: results || [] });
+  } catch (err: any) {
+    console.error('service accounts list error:', err);
+    return c.json({ accounts: [], error: err.message }, 500);
+  }
+});
+
+app.post('/account/service-accounts', async (c) => {
+  const { db, error } = ensureAccountDb(c);
+  if (error) return error;
+  try {
+    const body = await c.req.json();
+    const { id, owner_id, name, description, scopes, token_hash } = body;
+    if (!id || !owner_id || !name || !token_hash) {
+      return c.json({ error: 'id, owner_id, name, token_hash required' }, 400);
+    }
+    await db!.prepare(`
+      INSERT INTO service_accounts (id, owner_id, name, description, scopes, token_hash, active, created_at)
+      VALUES (?, ?, ?, ?, ?, ?, 1, datetime('now'))
+    `).bind(id, owner_id, name, description || null, JSON.stringify(scopes || []), token_hash).run();
+    return c.json({ success: true, id }, 201);
+  } catch (err: any) {
+    console.error('service accounts create error:', err);
+    return c.json({ error: 'Failed to create service account', details: err.message }, 500);
+  }
+});
+
 export default app;
