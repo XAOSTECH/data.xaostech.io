@@ -28,11 +28,13 @@ migrations_dir = "migrations/data"
 binding = "ACCOUNT_DB"
 database_name = "account-db"
 database_id = "${D1_ACCOUNT_DB_ID}"
+migrations_dir = "migrations/account"
 
 [[env.production.d1_databases]]
 binding = "BLOG_DB"
 database_name = "blog-db"
 database_id = "${D1_BLOG_DB_ID}"
+migrations_dir = "migrations/blog"
 
 [[env.production.d1_databases]]
 binding = "LEARNING_DB"
@@ -44,11 +46,7 @@ migrations_dir = "migrations/learning"
 binding = "PAYMENTS_DB"
 database_name = "payments-db"
 database_id = "${D1_PAYMENTS_DB_ID}"
-
-[[env.production.d1_databases]]
-binding = "CHAT_DB"
-database_name = "chat-db"
-database_id = "${D1_CHAT_DB_ID}"
+migrations_dir = "migrations/payments"
 
 [[env.production.d1_databases]]
 binding = "ART_DB"

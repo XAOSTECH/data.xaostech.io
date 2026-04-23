@@ -6,7 +6,6 @@ interface Env {
   DB: D1Database;
   ACCOUNT_DB: D1Database;
   BLOG_DB: D1Database;
-  CHAT_DB: D1Database;
   IMG: R2Bucket;
   BLOG_MEDIA: R2Bucket;
   CONSENT_KV: KVNamespace;
@@ -1107,15 +1106,15 @@ app.delete('/blog/posts/:id', async (c) => {
 
 // =============================================================================
 // CHAT ROUTES (for API worker to call via service binding)
-// Uses CHAT_DB for messages storage
+// Uses ACCOUNT_DB (chat tables consolidated into account-db)
 // =============================================================================
 
 // Get messages for a user or room
 app.get('/chat/messages', async (c) => {
-  const db = c.env.CHAT_DB;
+  const db = c.env.ACCOUNT_DB;
 
   if (!db) {
-    return c.json({ error: 'CHAT_DB not configured' }, 501);
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
 
   try {
@@ -1147,10 +1146,10 @@ app.get('/chat/messages', async (c) => {
 
 // Create a new message
 app.post('/chat/messages', async (c) => {
-  const db = c.env.CHAT_DB;
+  const db = c.env.ACCOUNT_DB;
 
   if (!db) {
-    return c.json({ error: 'CHAT_DB not configured' }, 501);
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
 
   try {
@@ -1176,10 +1175,10 @@ app.post('/chat/messages', async (c) => {
 
 // Moderate a message (delete or flag)
 app.post('/chat/moderation', async (c) => {
-  const db = c.env.CHAT_DB;
+  const db = c.env.ACCOUNT_DB;
 
   if (!db) {
-    return c.json({ error: 'CHAT_DB not configured' }, 501);
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
 
   try {
@@ -1207,11 +1206,11 @@ app.post('/chat/moderation', async (c) => {
 
 // Delete a chat room
 app.delete('/chat/rooms/:id', async (c) => {
-  const db = c.env.CHAT_DB;
+  const db = c.env.ACCOUNT_DB;
   const roomId = c.req.param('id');
 
   if (!db) {
-    return c.json({ error: 'CHAT_DB not configured' }, 501);
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
 
   try {
@@ -1227,10 +1226,10 @@ app.delete('/chat/rooms/:id', async (c) => {
 
 // List chat rooms
 app.get('/chat/rooms', async (c) => {
-  const db = c.env.CHAT_DB;
+  const db = c.env.ACCOUNT_DB;
 
   if (!db) {
-    return c.json({ error: 'CHAT_DB not configured' }, 501);
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
 
   try {
@@ -1249,11 +1248,11 @@ app.get('/chat/rooms', async (c) => {
 
 // Get messages for a specific room
 app.get('/chat/rooms/:id/messages', async (c) => {
-  const db = c.env.CHAT_DB;
+  const db = c.env.ACCOUNT_DB;
   const roomId = c.req.param('id');
 
   if (!db) {
-    return c.json({ error: 'CHAT_DB not configured' }, 501);
+    return c.json({ error: 'ACCOUNT_DB not configured' }, 501);
   }
 
   try {
