@@ -54,9 +54,9 @@ database_name = "chat-db"
 database_id = "${D1_CHAT_DB_ID}"
 
 [[env.production.d1_databases]]
-binding = "AI_DB"
-database_name = "ai-db"
-database_id = "${D1_AI_DB_ID}"
+binding = "ART_DB"
+database_name = "art-db"
+database_id = "${D1_ART_DB_ID}"
 
 # =============================================================================
 # KV NAMESPACES
