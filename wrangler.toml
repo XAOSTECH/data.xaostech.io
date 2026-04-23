@@ -43,12 +43,6 @@ database_id = "${D1_LEARNING_DB_ID}"
 migrations_dir = "migrations/learning"
 
 [[env.production.d1_databases]]
-binding = "PAYMENTS_DB"
-database_name = "payments-db"
-database_id = "${D1_PAYMENTS_DB_ID}"
-migrations_dir = "migrations/payments"
-
-[[env.production.d1_databases]]
 binding = "ART_DB"
 database_name = "art-db"
 database_id = "${D1_ART_DB_ID}"
