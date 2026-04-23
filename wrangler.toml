@@ -22,6 +22,7 @@ GDPR_REQUIRED = "true"
 binding = "DB"
 database_name = "data-db"
 database_id = "${D1_DATA_DB_ID}"
+migrations_dir = "migrations/data"
 
 [[env.production.d1_databases]]
 binding = "ACCOUNT_DB"
@@ -34,14 +35,10 @@ database_name = "blog-db"
 database_id = "${D1_BLOG_DB_ID}"
 
 [[env.production.d1_databases]]
-binding = "LINGUA_DB"
-database_name = "lingua-db"
-database_id = "${D1_LINGUA_DB_ID}"
-
-[[env.production.d1_databases]]
-binding = "EDU_DB"
-database_name = "edu-xaostech-db"
-database_id = "${D1_EDU_DB_ID}"
+binding = "LEARNING_DB"
+database_name = "learning-db"
+database_id = "${D1_LEARNING_DB_ID}"
+migrations_dir = "migrations/learning"
 
 [[env.production.d1_databases]]
 binding = "PAYMENTS_DB"
@@ -57,6 +54,7 @@ database_id = "${D1_CHAT_DB_ID}"
 binding = "ART_DB"
 database_name = "art-db"
 database_id = "${D1_ART_DB_ID}"
+migrations_dir = "migrations/art"
 
 # =============================================================================
 # KV NAMESPACES
